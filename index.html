@@ -1,0 +1,104 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+  <meta name="theme-color" content="#0b0d10">
+  <title>SoundDrive</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Ccircle cx='32' cy='32' r='28' fill='%23111' stroke='%23ff6a2b' stroke-width='6'/%3E%3Cpath d='M32 32 L48 18' stroke='%23ff6a2b' stroke-width='6' stroke-linecap='round'/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+  <div id="app">
+    <header class="topbar">
+      <div class="brand"><span class="brand-dot"></span>SoundDrive</div>
+      <nav class="modes" id="modes">
+        <button class="mode" data-mode="gps">GPS-Fahrt</button>
+        <button class="mode" data-mode="sim">Simulator</button>
+        <button class="mode" data-mode="stand">Standgas</button>
+      </nav>
+      <label class="vol">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9v6h4l5 4V5L8 9H4zm12.5 3a4.5 4.5 0 0 0-2.5-4v8a4.5 4.5 0 0 0 2.5-4zM14 3.2v2.1a7 7 0 0 1 0 13.4v2.1a9 9 0 0 0 0-17.6z"/></svg>
+        <input type="range" id="volume" min="0" max="100" step="1" aria-label="Lautstärke">
+      </label>
+      <button id="power" class="power"><span class="power-ring"></span><span class="power-label">START</span></button>
+    </header>
+
+    <main class="main">
+      <section class="dash">
+        <div class="shiftlights" id="shiftlights"></div>
+        <div class="dash-body">
+          <div class="tacho-wrap">
+            <canvas id="tacho"></canvas>
+          </div>
+          <div class="pedals" id="pedals">
+            <div class="pedal brake" id="brake"><div class="fill"></div><span>BREMSE</span></div>
+            <div class="pedal gas" id="gas"><div class="fill"></div><span>GAS</span><small>höher = mehr</small></div>
+          </div>
+        </div>
+        <div class="status" id="status"></div>
+      </section>
+
+      <section class="side">
+        <div class="tabs">
+          <button class="tab active" data-tab="engines">Motoren</button>
+          <button class="tab" data-tab="sound">Sound &amp; Fahrt</button>
+        </div>
+        <div class="panel active" id="panel-engines">
+          <div class="profiles" id="profiles"></div>
+        </div>
+        <div class="panel" id="panel-sound">
+          <div class="setting">
+            <div class="setting-head"><span>Bass</span><output id="o-bass"></output></div>
+            <input type="range" id="s-bass" min="0" max="12" step="1">
+          </div>
+          <div class="setting">
+            <div class="setting-head"><span>Ansauggeräusch</span><output id="o-intake"></output></div>
+            <input type="range" id="s-intake" min="0" max="2" step="0.05">
+          </div>
+          <div class="setting">
+            <div class="setting-head"><span>Knallen &amp; Blubbern</span><output id="o-crackle"></output></div>
+            <input type="range" id="s-crackle" min="0" max="2" step="0.05">
+          </div>
+          <div class="setting">
+            <div class="setting-head"><span>Turbo / Kompressor</span><output id="o-turbo"></output></div>
+            <input type="range" id="s-turbo" min="0" max="2" step="0.05">
+          </div>
+          <div class="setting">
+            <div class="setting-head"><span>Stereobreite</span><output id="o-width"></output></div>
+            <input type="range" id="s-width" min="0" max="1.5" step="0.05">
+          </div>
+          <div class="setting">
+            <div class="setting-head"><span>GPS: Volllast ab</span><output id="o-sens"></output></div>
+            <input type="range" id="s-sens" min="1" max="6" step="0.25">
+            <p class="hint">Wie stark der Tesla beschleunigen muss, damit der virtuelle Motor Vollgas gibt. Kleiner = früher laut.</p>
+          </div>
+          <div class="setting row">
+            <span>Sport-Schaltprogramm</span>
+            <button class="switch" id="s-sport" role="switch" aria-checked="false"><span></span></button>
+          </div>
+          <div class="setting row">
+            <span>Einheit</span>
+            <div class="seg" id="s-unit">
+              <button data-unit="kmh">km/h</button><button data-unit="mph">mph</button>
+            </div>
+          </div>
+          <div class="info">
+            <h3>So funktioniert's</h3>
+            <p><b>GPS-Fahrt:</b> Die Geschwindigkeit kommt vom GPS des Browsers. Ein virtuelles Getriebe schaltet passend zum gewählten Motor, die Last wird aus der Beschleunigung geschätzt. GPS liefert etwa einmal pro Sekunde Werte – dazwischen wird gerechnet, darum reagiert der Sound minimal verzögert.</p>
+            <p><b>Simulator:</b> Zum Ausprobieren im Stand – Gas und Bremse auf dem Bildschirm steuern ein virtuelles Auto.</p>
+            <p><b>Standgas:</b> Leerlauf, mit dem Gaspedal hochdrehen.</p>
+            <p class="warn">Bitte nur in angemessener Lautstärke und niemals während der Fahrt am Bildschirm bedienen. Motor vor Fahrtbeginn wählen und starten.</p>
+          </div>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <script src="js/engine-dsp.js"></script>
+  <script src="js/profiles.js"></script>
+  <script src="js/vehicle.js"></script>
+  <script src="js/audio.js"></script>
+  <script src="js/app.js"></script>
+</body>
+</html>
