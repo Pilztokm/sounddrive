@@ -20,8 +20,10 @@
     start() {
       const AC = window.AudioContext || window.webkitAudioContext;
       if (!AC) return Promise.reject(new Error('Web Audio wird nicht unterstützt'));
+      this.unlockIOS();
       if (!this.ctx) {
         try { this.ctx = new AC({ latencyHint: 'interactive' }); } catch (e) { this.ctx = new AC(); }
+        this.ctx.onstatechange = () => { if (this.onstate) this.onstate(this.ctx.state); };
         this.ready = this.build();
       }
       const r = this.ctx.resume();
@@ -29,6 +31,36 @@
     }
 
     suspend() { if (this.ctx && this.ctx.state === 'running') this.ctx.suspend(); }
+
+    // Nach Unterbrechung (iOS: Anruf, Benachrichtigung, Sperrbildschirm) wieder anwerfen.
+    // Muss aus einer Nutzergeste heraus aufgerufen werden.
+    resumeIfNeeded() {
+      if (!this.ctx || this.ctx.state === 'running') return;
+      this.unlockIOS();
+      this.ctx.resume().catch(() => {});
+    }
+
+    get running() { return !!this.ctx && this.ctx.state === 'running'; }
+
+    // iPhone/iPad: Web Audio läuft sonst in der „Umgebungs“-Kategorie und wird vom
+    // Stummschalter stummgeschaltet. iOS 17+: Audio-Session auf „playback“ stellen,
+    // ältere Versionen: stilles <audio> in Schleife schaltet die Session ebenfalls um.
+    unlockIOS() {
+      if (!isIOS()) return;
+      try {
+        if (navigator.audioSession) { navigator.audioSession.type = 'playback'; return; }
+      } catch (e) { /* weiter mit Fallback */ }
+      if (!this.silentEl) {
+        const el = document.createElement('audio');
+        el.setAttribute('playsinline', '');
+        el.setAttribute('webkit-playsinline', '');
+        el.loop = true;
+        el.src = silentWavUrl();
+        this.silentEl = el;
+      }
+      const p = this.silentEl.play();
+      if (p && p.catch) p.catch(() => {});
+    }
 
     // Gesamtverzögerung der Audio-Ausgabe in ms (soweit der Browser sie meldet)
     latencyMs() {
@@ -102,6 +134,22 @@
       if (!this.master) return;
       this.master.gain.setTargetAtTime(Math.pow(v / 100, 1.6), this.ctx.currentTime, 0.03);
     }
+  }
+
+  function isIOS() {
+    const ua = navigator.userAgent || '';
+    return /iPad|iPhone|iPod/.test(ua) || (/Macintosh/.test(ua) && navigator.maxTouchPoints > 1);
+  }
+
+  // 0,5 s Stille als WAV (8 kHz, 16 Bit, mono)
+  function silentWavUrl() {
+    const n = 4000, b = new DataView(new ArrayBuffer(44 + n * 2));
+    const str = (o, s) => { for (let i = 0; i < s.length; i++) b.setUint8(o + i, s.charCodeAt(i)); };
+    str(0, 'RIFF'); b.setUint32(4, 36 + n * 2, true); str(8, 'WAVEfmt ');
+    b.setUint32(16, 16, true); b.setUint16(20, 1, true); b.setUint16(22, 1, true);
+    b.setUint32(24, 8000, true); b.setUint32(28, 16000, true); b.setUint16(32, 2, true); b.setUint16(34, 16, true);
+    str(36, 'data'); b.setUint32(40, n * 2, true);
+    return URL.createObjectURL(new Blob([b.buffer], { type: 'audio/wav' }));
   }
 
   G.AudioEngine = AudioEngine;

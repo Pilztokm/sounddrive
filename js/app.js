@@ -394,7 +394,12 @@
     if (level) s.querySelector('.dot').classList.add(level);
     s.querySelector('.txt').textContent = text;
   }
+  let lastError = null;
   function updateStatus() {
+    if (lastError) return setStatus('bad', lastError);
+    if (running && audio.ctx && !audio.running) {
+      return setStatus('bad', `Ton angehalten (${audio.ctx.state}) – einmal auf den Bildschirm tippen. iPhone: Lautstärke-Tasten und Stummschalter prüfen.`);
+    }
     if (mode === 'gps') {
       if (!running) return setStatus('', 'GPS-Fahrt: Motor starten, dann Standortzugriff erlauben.');
       if (gps.err) return setStatus('bad', gps.err + (window.isSecureContext ? '' : ' Seite über https:// öffnen.'));
@@ -405,10 +410,21 @@
       const al = lat ? ` · Audio ${lat} ms` : '';
       return setStatus('good', `GPS aktiv${acc}${hz}${al}`);
     }
-    if (mode === 'sim') return setStatus(running ? 'good' : '', 'Simulator: rechts Gas geben (höher tippen = mehr Gas), Bremse daneben. Tastatur: ↑ / ↓');
-    return setStatus(running ? 'good' : '', 'Standgas: Gaspedal antippen oder halten zum Hochdrehen.');
+    const lat = running ? audio.latencyMs() : null;
+    const al = running ? ` · ${audio.mode}${lat ? ' ' + lat + ' ms' : ''}` : '';
+    if (mode === 'sim') return setStatus(running ? 'good' : '', 'Simulator: rechts Gas geben (höher tippen = mehr Gas), Bremse daneben. Tastatur: ↑ / ↓' + al);
+    return setStatus(running ? 'good' : '', 'Standgas: Gaspedal antippen oder halten zum Hochdrehen.' + al);
   }
   gps.onchange = updateStatus;
+  audio.onstate = updateStatus;
+
+  // Jede Berührung darf einen unterbrochenen Ton wieder freigeben (iOS verlangt dafür eine Geste)
+  document.addEventListener('pointerdown', () => { if (running) audio.resumeIfNeeded(); }, true);
+
+  // Fehler sichtbar machen – im Auto/am Handy gibt es keine Entwicklerkonsole
+  const showError = (msg) => { lastError = 'Fehler: ' + msg; setStatus('bad', lastError); };
+  window.addEventListener('error', (e) => showError(e.message || e));
+  window.addEventListener('unhandledrejection', (e) => showError((e.reason && e.reason.message) || e.reason));
 
   /* ---------- Render-Schleife ---------- */
   function frame() {
@@ -428,7 +444,7 @@
   setMode(mode);
   window.addEventListener('resize', () => tacho.resize());
   if (window.ResizeObserver) new ResizeObserver(() => tacho.resize()).observe($('#tacho').parentElement);
-  setInterval(() => { if (mode === 'gps' && running) updateStatus(); }, 1000);
+  setInterval(() => { if (running) updateStatus(); }, 1000);
   requestAnimationFrame(frame);
   window.SoundDrive = { audio, drive, gps }; // für die Fehlersuche in der Konsole
 
