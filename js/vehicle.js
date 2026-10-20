@@ -101,7 +101,7 @@
 
       // ---- Verbrenner ----
       let tgt;
-      let tauUp = 0.07, tauDown = 0.09;
+      let tauUp = 0.04, tauDown = 0.05;
       if (neutral) {
         this.shift = null;
         tgt = p.idle + thr * (p.limiter + 400 - p.idle);
@@ -158,8 +158,7 @@
       if (!this.shift) {
         // Leerlauf lebt: leichte Drehzahlschwankung
         if (tgt < p.idle * 1.2) tgt += p.idle * (0.012 * Math.sin(this.t * 2.3) + 0.008 * Math.sin(this.t * 5.7));
-        this.rpm += (tgt - this.rpm) * smooth(dt, tgt > this.rpm ? tauUp : tauDown);
-      }
+        this.rpm += (tgt - this.rpm) * smooth(dt, tgt > this.rpm ? tauUp : tauDown);      }
 
       // Drehzahlbegrenzer
       this.limCool -= dt;
@@ -181,7 +180,7 @@
       const floor = thrIn < 0.08 && this.rpm > p.idle * 1.8 ? 0.25 : 0;
       this.overrun = Math.max(floor, this.overrun - dt / 2.4);
 
-      this.thr += (thr - this.thr) * smooth(dt, 0.05);
+      this.thr += (thr - this.thr) * smooth(dt, 0.03);
       return this.out(cut, starter, neutral);
     }
 
@@ -253,31 +252,46 @@
         }
         this.rateHz = lerp(this.rateHz || 1 / dtp, 1 / dtp, 0.3);
         const aRaw = clamp((s - this.fixV) / dtp, -12, 12);
-        this.acc = lerp(this.acc, aRaw, 0.65);
+        // adaptiv glätten: echte Änderungen (Gas geben/wegnehmen) sofort übernehmen,
+        // nur kleines GPS-Rauschen dämpfen – jede Glättung kostet direkt Reaktionszeit
+        this.acc = Math.abs(aRaw - this.acc) > 0.8 ? aRaw : lerp(this.acc, aRaw, 0.6);
+        // Für die Last-Schätzung den Trend mitnehmen: ein Messintervall, in dem das
+        // Beschleunigen endet/beginnt, zeigt sonst nur den halben Wert
+        const jump = aRaw - (this.aRawPrev != null ? this.aRawPrev : aRaw);
+        this.accT = Math.abs(jump) > 0.8 ? clamp(aRaw + jump * 0.6, -12, 12) : this.acc;
+        this.aRawPrev = aRaw;
       }
       if (s === null || s < 0.6) s = 0;
       if (s === 0 && this.fixV === 0) this.acc = Math.min(this.acc, 0);
-      this.fixV = s; this.fixT = now;
+      // Hochrechnen ab dem Messzeitpunkt, nicht ab der Ankunft im Browser
+      let delivery = (Date.now() - pos.timestamp) / 1000;
+      if (!(delivery >= 0 && delivery < 1.5)) delivery = 0;
+      this.delivery = delivery;
+      this.fixV = s; this.fixT = now - delivery;
       this.last = here; this.ok = true; this.err = null; this.accuracy = c.accuracy;
       if (this.onchange) this.onchange();
     }
 
-    update(dt, now) {
+    // lead: Vorhersage in s – gleicht die Eigenverzögerung des GPS-Empfängers aus
+    update(dt, now, lead) {
       if (!this.ok) return 0;
       const age = now - this.fixT;
       // zwischen den GPS-Punkten (meist 1 Hz) mit der Beschleunigung weiterrechnen
-      let target = age > 4 ? this.fixV : this.fixV + this.acc * Math.min(age, 0.8);
+      let target = age > 4 ? this.fixV : this.fixV + this.acc * Math.min(age + (lead || 0), 1.6);
       target = Math.max(0, target);
-      this.v += (target - this.v) * smooth(dt, 0.35);
+      this.v += (target - this.v) * smooth(dt, 0.12);
       return this.v;
     }
 
-    // Gaspedalstellung aus der Beschleunigung schätzen
-    throttle(aFull) {
-      const v = this.v, a = this.acc;
-      if (v < 0.5 && a < 0.3) return 0;
-      if (a < -0.35) return 0;
-      return clamp(0.1 + v * 0.004 + a / aFull, 0, 1);
+    // Gaspedalstellung aus der Beschleunigung schätzen (geglättet nur gegen Stufen im 1-Hz-Takt)
+    throttle(aFull, dt) {
+      const v = this.v, a = this.accT != null ? this.accT : this.acc;
+      let t;
+      if (v < 0.5 && a < 0.3) t = 0;
+      else if (a < -0.25) t = 0;
+      else t = clamp(0.1 + v * 0.004 + a / aFull, 0, 1);
+      this.thrOut = (this.thrOut || 0) + (t - (this.thrOut || 0)) * smooth(dt || 0.02, t < (this.thrOut || 0) ? 0.06 : 0.1);
+      return this.thrOut;
     }
   }
 

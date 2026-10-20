@@ -76,6 +76,13 @@
       const A = Math.pow(10, db / 40);
       return this._set(1 + a * A, -2 * c, 1 - a * A, 1 + a / A, -2 * c, 1 - a / A);
     }
+    lowShelf(sr, f, db) {
+      const [c, a] = this._w(sr, f, 0.7071);
+      const A = Math.pow(10, db / 40), k = 2 * Math.sqrt(A) * a;
+      return this._set(
+        A * ((A + 1) - (A - 1) * c + k), 2 * A * ((A - 1) - (A + 1) * c), A * ((A + 1) - (A - 1) * c - k),
+        (A + 1) + (A - 1) * c + k, -2 * ((A - 1) + (A + 1) * c), (A + 1) + (A - 1) * c - k);
+    }
     process(x) {
       const y = this.b0 * x + this.z1;
       this.z1 = this.b1 * x - this.a1 * y + this.z2;
@@ -119,6 +126,68 @@
     return v;
   }
 
+  /*
+   * Ausgangsstufe: Klangregelung, Innenraum-Hall (kleines Feedback-Delay-Netz,
+   * gibt Teslas Immersive-Sound-Upmix dekorreliertes Material), Lautheit und
+   * Limiter ohne Vorlauf (keine zusätzliche Latenz).
+   */
+  class Output {
+    constructor(sr) {
+      this.sr = sr;
+      this.shL = new Biquad(); this.shR = new Biquad();
+      this.prL = new Biquad(); this.prR = new Biquad();
+      this.len = [7.3, 11.1, 13.9, 17.3].map((ms) => Math.round(ms * sr / 1000));
+      this.lines = this.len.map((n) => new Delay(n + 2));
+      this.lp = [0, 0, 0, 0];
+      this.env = 0;
+      this.att = 1 - Math.exp(-1 / (0.0008 * sr));
+      this.rel = Math.exp(-1 / (0.15 * sr));
+      this.wet = 0.1;
+      this.configure({ bass: 4, room: 0.35 });
+    }
+    configure(s) {
+      if (typeof s.bass === 'number') { this.shL.lowShelf(this.sr, 110, s.bass); this.shR.lowShelf(this.sr, 110, s.bass); }
+      this.prL.peak(this.sr, 2600, 0.8, 1.5); this.prR.peak(this.sr, 2600, 0.8, 1.5);
+      if (typeof s.room === 'number') this.wet = s.room * 0.32;
+    }
+    reset() { for (const d of this.lines) d.clear(); this.lp = [0, 0, 0, 0]; this.env = 0; }
+    process(L, R, off, m, loud) {
+      const CEIL = 0.84, lines = this.lines, len = this.len, lp = this.lp, wet = this.wet;
+      for (let s = off; s < off + m; s++) {
+        let l = this.prL.process(this.shL.process(L[s]));
+        let r = this.prR.process(this.shR.process(R[s]));
+        if (wet > 0.001) {
+          const y0 = lines[0].read(len[0]), y1 = lines[1].read(len[1]);
+          const y2 = lines[2].read(len[2]), y3 = lines[3].read(len[3]);
+          const m0 = (y0 + y1 + y2 + y3) * 0.5, m1 = (y0 - y1 + y2 - y3) * 0.5;
+          const m2 = (y0 + y1 - y2 - y3) * 0.5, m3 = (y0 - y1 - y2 + y3) * 0.5;
+          lp[0] += (m0 - lp[0]) * 0.42; lp[1] += (m1 - lp[1]) * 0.38;
+          lp[2] += (m2 - lp[2]) * 0.35; lp[3] += (m3 - lp[3]) * 0.31;
+          lines[0].write(l * 0.5 + lp[0] * 0.62); lines[1].write(r * 0.5 + lp[1] * 0.62);
+          lines[2].write(l * 0.5 + lp[2] * 0.62); lines[3].write(r * 0.5 + lp[3] * 0.62);
+          l += (y0 + 0.6 * y2) * wet;
+          r += (y1 + 0.6 * y3) * wet;
+        }
+        l *= loud; r *= loud;
+        const pk = Math.max(l < 0 ? -l : l, r < 0 ? -r : r);
+        this.env = pk > this.env ? this.env + (pk - this.env) * this.att : this.env * this.rel;
+        const g = this.env > CEIL ? CEIL / this.env : 1;
+        L[s] = softClip(l * g);
+        R[s] = softClip(r * g);
+      }
+    }
+  }
+
+  function softClip(x) {
+    const a = x < 0 ? -x : x;
+    if (a <= 0.85) return x;
+    const y = 0.85 + 0.09 * Math.tanh((a - 0.85) * 11);
+    return x < 0 ? -y : y;
+  }
+
+  // Lautheit: bringt den Motor bei gleicher Fahrzeug-Lautstärke auf Musik-Niveau
+  const LOUD = 1.6;
+
   const BLOCK = 64;
   const MAX_CYL = 12;
 
@@ -136,9 +205,10 @@
       for (let i = 0; i < 8; i++) this.crk.push({ env: 0, dec: 0, amp: 0, lp: 0, col: 0.3, bank: 0, body: 0 });
 
       const names = ['boomL', 'boomR', 'raspL', 'raspR', 'lpL', 'lpR', 'lp2L', 'lp2R', 'intRes', 'intNz',
-        'mech', 'hiss', 'bov', 'bovHp', 'noiseLp', 'evL', 'evR', 'evWind', 'subHp'];
+        'mech', 'hiss', 'bov', 'bovHp', 'noiseLp', 'evL', 'evR', 'evWind', 'intNzR', 'body1', 'body2'];
       this.f = {};
       for (const n of names) this.f[n] = new Biquad();
+      this.out = new Output(sr);
 
       this.N = 1024;
       this.tab = buildPulse(this.N, 0.08);
@@ -146,7 +216,10 @@
       this.ev = [];
       this.cylGain = [];
 
-      this.set = { intake: 1, crackle: 1, turbo: 1, width: 0.8 };
+      this.set = { intake: 1, crackle: 1, turbo: 1, width: 0.8, sub: 1, bass: 4, room: 0.35 };
+      this.subPh = [0, 0, 0]; this.subInc = [0, 0, 0]; this.subW = [0, 0, 0];
+      this.subEnv = 0; this.subAmt = 0;
+      this.kSubEnv = 1 - Math.exp(-TAU * 25 / sr);
 
       // Zustand (Zielwerte kommen 50x/s vom Hauptthread, hier wird geglättet)
       this.rpm = 0; this.rpmT = 0;
@@ -157,7 +230,7 @@
       this.phase = 0; this.next = 0;
       this.nz = 0;
       this.kRpm = 1 - Math.exp(-1 / (sr * 0.012));
-      this.kThr = 1 - Math.exp(-1 / (sr * 0.03));
+      this.kThr = 1 - Math.exp(-1 / (sr * 0.02));
       this.kSt = 1 - Math.exp(-1 / (sr * 0.05));
 
       this.boost = 0; this.boostPeak = 0; this.thrSlow = 0; this.bovCool = 0;
@@ -172,7 +245,7 @@
       this.lfo = 0;
     }
 
-    setSettings(s) { Object.assign(this.set, s); }
+    setSettings(s) { Object.assign(this.set, s); this.out.configure(this.set); }
 
     setState(d) {
       if (typeof d.rpm === 'number' && isFinite(d.rpm)) this.rpmT = clamp(d.rpm, 0, 25000);
@@ -195,7 +268,6 @@
 
       if (p.type === 'electric') {
         this.f.evWind.bp(sr, 900, 0.5);
-        this.f.subHp.hp(sr, 22, 0.7);
         return;
       }
 
@@ -215,6 +287,9 @@
       f.raspL.peak(sr, p.rasp.f, p.rasp.q, p.rasp.db);
       f.raspR.peak(sr, p.rasp.f * 0.97, p.rasp.q, p.rasp.db);
       f.intRes.bp(sr, p.intakeHz, 3);
+      // Karosserie-Eigenmoden: dröhnen, wenn Zünd- oder Halbordnungen sie treffen
+      f.body1.bp(sr, 42, 4);
+      f.body2.bp(sr, 71, 4);
       f.mech.bp(sr, p.mechHz || 2800, 1.4);
       f.noiseLp.lp(sr, 3800, 0.7);
       f.bov.bp(sr, 2300, 0.9);
@@ -223,6 +298,7 @@
 
     reset() {
       if (this.p) this.setProfile(this.p);
+      this.out.reset();
       this.dcL.x = this.dcL.y = this.dcR.x = this.dcR.y = 0;
     }
 
@@ -280,6 +356,18 @@
       f.lp2L.lp(sr, fc * 1.6, 0.55); f.lp2R.lp(sr, fc * 1.65, 0.55);
 
       f.intNz.bp(sr, 450 + 2400 * rpmN, 1.1);
+      f.intNzR.bp(sr, 470 + 2350 * rpmN, 1.1);
+
+      // Subwoofer-Ebene: Zündfrequenz und ihre Halb-/Viertelordnungen, gewichtet auf
+      // den Bereich, den der Subwoofer wirklich spielt (~25–110 Hz)
+      const fireHz = this.rpm / 60 * this.ev.length / p.cycleRevs;
+      const ratios = [1, 0.5, 0.25], weights = [1, 0.7, 0.45];
+      for (let k = 0; k < 3; k++) {
+        const fk = fireHz * ratios[k];
+        this.subInc[k] = fk / sr;
+        this.subW[k] = fk < 20 || fk > 150 ? 0 : weights[k] * Math.exp(-0.5 * Math.pow(Math.log2(fk / 48) / 0.8, 2));
+      }
+      this.subAmt = this.set.sub * (p.subGain != null ? p.subGain : 1) * (0.35 + 0.65 * thr) * clamp(this.rpm / p.idle, 0, 1);
       this.intakeAmt = p.intake * this.set.intake * (0.08 + thr) * (0.25 + 0.75 * rpmN);
       this.mechAmt = p.mech * (0.35 + 0.65 * rpmN);
 
@@ -328,6 +416,7 @@
         const m = Math.min(BLOCK, n - i);
         if (this.p.type === 'electric') this.renderEV(L, R, i, m);
         else { this.block(m); this.renderICE(L, R, i, m); }
+        this.out.process(L, R, i, m, LOUD);
         i += m;
       }
       // Notbremse bei numerischen Problemen
@@ -355,6 +444,7 @@
       const T = p.turbo, turboAmt = T ? this.turboAmt : 0;
       const sc = p.sc;
       const dcK = this.dcK;
+      const subInc = this.subInc, subW = this.subW, subAmt = this.subAmt, kSub = this.kSubEnv;
 
       for (let s = 0; s < m; s++) {
         this.rpm += (this.rpmT - this.rpm) * this.kRpm;
@@ -421,9 +511,24 @@
         eL = Math.tanh(eL * drive) * invD;
         eR = Math.tanh(eR * drive) * invD;
 
-        // Ansaugung + Mechanik (Mitte)
-        const intake = (f.intRes.process(ind) * 1.4 + f.intNz.process(white) * (0.12 + ind * 0.9)) * intakeAmt;
-        let mid = intake + f.mech.process(raw) * mechAmt;
+        // Ansaugung (Resonanz mittig, Rauschen dekorreliert links/rechts) + Mechanik
+        const white2 = Math.random() * 2 - 1;
+        const inMod = 0.12 + ind * 0.9;
+        const inRes = f.intRes.process(ind) * 1.4 * intakeAmt;
+        const inL = f.intNz.process(white) * inMod * intakeAmt;
+        const inR = f.intNzR.process(white2) * inMod * intakeAmt;
+        let mid = inRes + f.mech.process(raw) * mechAmt;
+
+        // Subwoofer-Ebene + Karosserie-Dröhnen (mono, wie echter Tiefbass)
+        this.subEnv += (ind - this.subEnv) * kSub;
+        let sb = 0;
+        for (let k = 0; k < 3; k++) {
+          const ph = this.subPh[k] + subInc[k];
+          this.subPh[k] = ph >= 1 ? ph - 1 : ph;
+          sb += subW[k] * Math.sin(TAU * this.subPh[k]);
+        }
+        sb = sb * (0.5 + 0.9 * this.subEnv) * 0.24 +(f.body1.process(raw) + f.body2.process(raw) * 0.7) * 0.9;
+        mid += Math.tanh(sb * subAmt * 2) * 0.5;
 
         // Turbo: Laderpfeifen, Rauschen, Blow-Off-Ventil (mit Flattern)
         if (T) {
@@ -457,14 +562,14 @@
           mid += (Math.sin(TAU * this.stPh) * 0.5 + (this.stPh * 2 - 1) * 0.25 + nz * 0.2) * 0.05 * this.starter * comp;
         }
 
-        let l = eL + mid, r = eR + mid;
+        let l = eL + inL + mid, r = eR + inR + mid;
         // Stereobreite (Mitte/Seite)
         const M = (l + r) * 0.5, S = (l - r) * 0.5 * width;
         l = (M + S) * gain; r = (M - S) * gain;
 
-        // Gleichanteil entfernen, dann weicher Limiter gegen Übersteuern
-        let y = l - this.dcL.x + dcK * this.dcL.y; this.dcL.x = l; this.dcL.y = y; L[off + s] = Math.tanh(y);
-        y = r - this.dcR.x + dcK * this.dcR.y; this.dcR.x = r; this.dcR.y = y; R[off + s] = Math.tanh(y);
+        // Gleichanteil entfernen (Limiter folgt in der Ausgangsstufe)
+        let y = l - this.dcL.x + dcK * this.dcL.y; this.dcL.x = l; this.dcL.y = y; L[off + s] = y;
+        y = r - this.dcR.x + dcK * this.dcR.y; this.dcR.x = r; this.dcR.y = y; R[off + s] = y;
       }
     }
 
@@ -496,11 +601,12 @@
         const whine = (Math.sin(TAU * ph[3]) * 0.06 * Math.min(1, this.rpm / 1500) * (0.25 + thr)
           + Math.sin(TAU * ph[4]) * 0.025 * thr) * on;
         const wind = f.evWind.process(Math.random() * 2 - 1) * 0.06 * rpmN * rpmN;
-        let l = f.evL.process((a * 0.6 + b * 0.25) * lvl) + sub * lvl * 0.8 + whine + wind;
-        let r = f.evR.process((b * 0.6 + a * 0.25) * lvl) + sub * lvl * 0.8 + whine + wind;
+        const subL = sub * lvl * 0.8 * this.set.sub;
+        let l = f.evL.process((a * 0.6 + b * 0.25) * lvl) + subL + whine + wind;
+        let r = f.evR.process((b * 0.6 + a * 0.25) * lvl) + subL + whine + wind;
         const M = (l + r) * 0.5, S = (l - r) * 0.5 * width;
-        L[off + s] = Math.tanh((M + S) * gain);
-        R[off + s] = Math.tanh((M - S) * gain);
+        L[off + s] = (M + S) * gain;
+        R[off + s] = (M - S) * gain;
       }
     }
   }

@@ -17,6 +17,11 @@ modelliert (AudioWorklet, 48 kHz):
 - Ansauggeräusch, Mechanik, **Turbo** (Pfeifen, Blow-Off, Flattern), **Kompressor-Heulen**
 - **Schubknallen/Blubbern** beim Gaswegnehmen, Zündunterbrechung beim Schalten, Drehzahlbegrenzer
 - Anlasser und Startvorgang mit Drehzahl-Flare
+- **Subwoofer-Ebene:** Zündfrequenz sowie Halb- und Viertelordnungen, gewichtet auf den
+  Bereich des Tesla-Subwoofers, plus Karosserie-Eigenmoden (~42/71 Hz), die bei passender
+  Drehzahl dröhnen
+- **Ausgangsstufe:** Bass-Shelf, Innenraum-Hall (Futter für Teslas Immersive Sound),
+  Lautheit auf Musik-Niveau und ein Limiter ohne Vorlauf (also ohne zusätzliche Latenz)
 - Virtuelles **Getriebe** mit realen Übersetzungen, Hand-, Doppelkupplungs- oder Automatik-Charakteristik,
   Zwischengas beim Runterschalten, Komfort- und Sport-Schaltprogramm
 
@@ -60,9 +65,13 @@ Pages aktivieren, fertig.
 
 **Hinweise**
 
-- GPS liefert etwa einmal pro Sekunde einen Wert. Dazwischen wird hochgerechnet – der Sound
-  reagiert deshalb ca. eine halbe bis eine Sekunde verzögert auf Gas und Bremse. Das ist eine
-  Grenze des Browsers: Tesla gibt Webseiten keinen direkten Zugriff auf Gaspedal oder Tacho.
+- GPS liefert etwa einmal pro Sekunde einen Wert. Dazwischen wird hochgerechnet, und eine
+  einstellbare **Vorhersage** gleicht die Eigenverzögerung des GPS-Empfängers aus. Das Tempo
+  folgt so mit nur ~0,2 s Versatz; Gas geben/wegnehmen wird nach ca. 1–1,5 s erkannt. Schneller
+  geht es mit GPS nicht – Tesla gibt Webseiten keinen Zugriff auf Gaspedal oder Tacho.
+- Die Statuszeile zeigt GPS-Takt (Hz) und Audio-Latenz (ms) – praktisch, um im Auto zu sehen,
+  was der Tesla-Browser liefert.
+- Für vollen Klang im Tesla unter *Audio* „Immersive Sound“ und den Subwoofer aufdrehen.
 - „GPS: Volllast ab“ in den Einstellungen bestimmt, wie stark du beschleunigen musst, damit der
   virtuelle Motor Vollgas gibt.
 - Der Sound ist nur im Innenraum hörbar (Fahrzeuglautsprecher), nicht außen.

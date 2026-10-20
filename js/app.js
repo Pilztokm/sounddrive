@@ -15,7 +15,7 @@
 
   const PROFILES = window.SD_PROFILES;
   const settings = Object.assign(
-    { volume: 70, bass: 4, intake: 1, crackle: 1, turbo: 1, width: 0.8, sens: 3, sport: false, unit: 'kmh' },
+    { volume: 90, bass: 4, sub: 1, room: 0.35, intake: 1, crackle: 1, turbo: 1, width: 0.8, sens: 3, lead: 0.35, sport: false, unit: 'kmh' },
     store.get('settings', {})
   );
   let mode = store.get('mode', 'gps');
@@ -105,9 +105,11 @@
 
   /* ---------- Einstellungen ---------- */
   function pushSettings() {
-    audio.setSettings({ intake: settings.intake, crackle: settings.crackle, turbo: settings.turbo, width: settings.width });
+    audio.setSettings({
+      intake: settings.intake, crackle: settings.crackle, turbo: settings.turbo, width: settings.width,
+      sub: settings.sub, bass: settings.bass, room: settings.room,
+    });
     audio.setVolume(settings.volume);
-    audio.setBass(settings.bass);
     drive.sport = settings.sport;
   }
 
@@ -115,8 +117,10 @@
     const pct = (v) => Math.round(v * 100) + ' %';
     const sliders = {
       bass: (v) => '+' + v + ' dB',
+      sub: pct, room: pct,
       intake: pct, crackle: pct, turbo: pct, width: pct,
       sens: (v) => (v / 9.81).toFixed(2) + ' g',
+      lead: (v) => v.toFixed(2).replace('.', ',') + ' s',
     };
     for (const [k, fmt] of Object.entries(sliders)) {
       const el = $('#s-' + k), out = $('#o-' + k);
@@ -191,7 +195,7 @@
   window.addEventListener('keyup', (e) => input.keys.delete(e.code));
   window.addEventListener('blur', () => input.keys.clear());
 
-  /* ---------- Hauptschleife (50 Hz) ---------- */
+  /* ---------- Hauptschleife (100 Hz – kurze Wege zum Klang) ---------- */
   let last = performance.now() / 1000;
   function tick() {
     const now = performance.now() / 1000;
@@ -208,8 +212,8 @@
     let v = 0, thr = 0;
     const neutral = mode === 'stand';
     if (mode === 'gps') {
-      v = gps.update(dt, now);
-      thr = gps.throttle(settings.sens);
+      v = gps.update(dt, now, settings.lead);
+      thr = gps.throttle(settings.sens, dt);
     } else if (mode === 'sim') {
       const interrupt = drive.shift && drive.shift.dir > 0 && profile.shiftStyle !== 'auto';
       v = car.update(dt, running && drive.state !== 'crank' ? gas : 0, brake, interrupt);
@@ -224,7 +228,7 @@
     view.o = o;
     view.gas = gas; view.brake = brake;
   }
-  setInterval(tick, 20);
+  setInterval(tick, 10);
 
   /* ---------- Drehzahlmesser ---------- */
   const tacho = (() => {
@@ -396,8 +400,10 @@
       if (gps.err) return setStatus('bad', gps.err + (window.isSecureContext ? '' : ' Seite über https:// öffnen.'));
       if (!gps.ok) return setStatus('warn', 'Warte auf GPS-Signal …');
       const acc = gps.accuracy != null ? ` · ±${Math.round(gps.accuracy)} m` : '';
-      const hz = gps.rateHz ? ` · ${gps.rateHz.toFixed(1)} Hz` : '';
-      return setStatus('good', `GPS aktiv${acc}${hz}`);
+      const hz = gps.rateHz ? ` · ${gps.rateHz.toFixed(1).replace('.', ',')} Hz` : '';
+      const lat = audio.latencyMs();
+      const al = lat ? ` · Audio ${lat} ms` : '';
+      return setStatus('good', `GPS aktiv${acc}${hz}${al}`);
     }
     if (mode === 'sim') return setStatus(running ? 'good' : '', 'Simulator: rechts Gas geben (höher tippen = mehr Gas), Bremse daneben. Tastatur: ↑ / ↓');
     return setStatus(running ? 'good' : '', 'Standgas: Gaspedal antippen oder halten zum Hochdrehen.');
